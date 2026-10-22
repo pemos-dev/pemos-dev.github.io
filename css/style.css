@@ -77,3 +77,4 @@ button,a,input,textarea{touch-action:manipulation}
 .article-content .callout-quote{--callout-color:#81a1c1}
 .article-content .callout-note p{margin:0 0 10px}
 .article-content .callout-note p:last-child{margin-bottom:0}
+.badge.discord-badge:hover{border-color:var(--line);color:#b7c0cf}.discord-contact:hover{border-color:var(--line);transform:none;cursor:default}
