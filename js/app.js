@@ -12,25 +12,24 @@
     if (!target) return;
     target.replaceChildren(el('p', 'error-state', message));
   };
-  const missingTechnologiesColumn = error => error?.code === 'PGRST204'
-    && /'technologies'.*column.*'projects'|column.*'technologies'.*'projects'/i.test(error.message || '');
+  const missingProjectColumn = (error, column) => error?.code === 'PGRST204'
+    && new RegExp(`['"]${column}['"].*column.*['"]projects['"]|column.*['"]${column}['"].*['"]projects['"]`, 'i').test(error.message || '');
   document.querySelectorAll('[data-year]').forEach(node => safeText(node, String(new Date().getFullYear())));
 
   async function loadProjects() {
     const grid = document.getElementById('project-grid');
     if (!grid) return;
     if (!db) return siteError(grid, window.portfolioDbError || 'Projects are temporarily unavailable.');
-    let { data, error } = await db.from('projects').select('id,title,description,repo_url,technologies,created_at').order('created_at', { ascending: false });
-    if (missingTechnologiesColumn(error)) {
-      ({ data, error } = await db.from('projects').select('id,title,description,repo_url,created_at').order('created_at', { ascending: false }));
-    }
+    // Read the table's actual columns so deployments using `url` or `repo_url`
+    // (and older schemas without `technologies`) both remain readable.
+    const { data, error } = await db.from('projects').select('*').order('created_at', { ascending: false });
     if (error) return siteError(grid, 'Projects could not be loaded. Please try again later.');
     if (!data?.length) return siteError(grid, 'No projects have been published yet.');
     const cards = data.map(project => {
       const article = el('article', 'project-card');
       const row = el('div', 'project-title-row');
       row.append(el('h2', '', project.title));
-      const url = safeHttpUrl(project.repo_url);
+      const url = safeHttpUrl(project.repo_url || project.url);
       if (url) {
         const link = el('a', 'project-link', 'View repository ↗');
         link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer';
@@ -231,7 +230,17 @@
       const project = { title: String(values.get('project_title')).trim(), description: String(values.get('description')).trim(), repo_url: url, technologies };
       let { error: insertError } = await db.from('projects').insert(project);
       let savedWithoutTechnologies = false;
-      if (missingTechnologiesColumn(insertError)) {
+      if (missingProjectColumn(insertError, 'repo_url')) {
+        const { repo_url, ...projectWithUrl } = project;
+        const projectForUrlSchema = { ...projectWithUrl, url: repo_url };
+        ({ error: insertError } = await db.from('projects').insert(projectForUrlSchema));
+        if (missingProjectColumn(insertError, 'technologies')) {
+          const { technologies: ignored, ...projectWithoutTechnologies } = projectForUrlSchema;
+          ({ error: insertError } = await db.from('projects').insert(projectWithoutTechnologies));
+          savedWithoutTechnologies = !insertError;
+        }
+      }
+      if (!savedWithoutTechnologies && missingProjectColumn(insertError, 'technologies')) {
         const { technologies: ignored, ...projectWithoutTechnologies } = project;
         ({ error: insertError } = await db.from('projects').insert(projectWithoutTechnologies));
         savedWithoutTechnologies = !insertError;
