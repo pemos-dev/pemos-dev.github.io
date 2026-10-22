@@ -12,13 +12,18 @@
     if (!target) return;
     target.replaceChildren(el('p', 'error-state', message));
   };
+  const missingTechnologiesColumn = error => error?.code === 'PGRST204'
+    && /'technologies'.*column.*'projects'|column.*'technologies'.*'projects'/i.test(error.message || '');
   document.querySelectorAll('[data-year]').forEach(node => safeText(node, String(new Date().getFullYear())));
 
   async function loadProjects() {
     const grid = document.getElementById('project-grid');
     if (!grid) return;
     if (!db) return siteError(grid, window.portfolioDbError || 'Projects are temporarily unavailable.');
-    const { data, error } = await db.from('projects').select('id,title,description,repo_url,technologies,created_at').order('created_at', { ascending: false });
+    let { data, error } = await db.from('projects').select('id,title,description,repo_url,technologies,created_at').order('created_at', { ascending: false });
+    if (missingTechnologiesColumn(error)) {
+      ({ data, error } = await db.from('projects').select('id,title,description,repo_url,created_at').order('created_at', { ascending: false }));
+    }
     if (error) return siteError(grid, 'Projects could not be loaded. Please try again later.');
     if (!data?.length) return siteError(grid, 'No projects have been published yet.');
     const cards = data.map(project => {
@@ -223,10 +228,17 @@
       if (!url || !(new URL(url).hostname.toLowerCase() === 'github.com' || new URL(url).hostname.toLowerCase().endsWith('.github.com'))) return statusNode(panel, 'Enter a valid github.com repository URL.', true);
       projectButton.disabled = true;
       const technologies = String(values.get('technologies') || '').split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 12);
-      const { error: insertError } = await db.from('projects').insert({ title: String(values.get('project_title')).trim(), description: String(values.get('description')).trim(), repo_url: url, technologies });
+      const project = { title: String(values.get('project_title')).trim(), description: String(values.get('description')).trim(), repo_url: url, technologies };
+      let { error: insertError } = await db.from('projects').insert(project);
+      let savedWithoutTechnologies = false;
+      if (missingTechnologiesColumn(insertError)) {
+        const { technologies: ignored, ...projectWithoutTechnologies } = project;
+        ({ error: insertError } = await db.from('projects').insert(projectWithoutTechnologies));
+        savedWithoutTechnologies = !insertError;
+      }
       projectButton.disabled = false;
-      if (insertError) return statusNode(panel, 'Could not add project. Check the projects table and owner INSERT policy.', true);
-      projectForm.reset(); statusNode(panel, 'Project added.');
+      if (insertError) return statusNode(panel, `Could not add project: ${insertError.message || 'Check the projects table and owner INSERT policy.'}`, true);
+      projectForm.reset(); statusNode(panel, savedWithoutTechnologies ? 'Project added without technologies. Add the technologies column in Supabase to save them.' : 'Project added.');
     });
     const logout = el('button', 'admin-close', 'Sign out'); logout.type = 'button'; logout.style.float = 'none'; logout.addEventListener('click', async () => { await db.auth.signOut(); panel.replaceChildren(el('h2', '', 'Signed out'), el('p', '', 'Close this window to continue.')); });
     panel.append(writeupForm); const divider = document.createElement('hr'); divider.className = 'admin-divider'; panel.append(divider, projectForm, logout);
