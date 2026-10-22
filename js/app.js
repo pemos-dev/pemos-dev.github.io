@@ -49,7 +49,7 @@
     const grid = document.getElementById('writeup-grid');
     if (!grid) return;
     if (!db) return siteError(grid, window.portfolioDbError || 'Write-ups are temporarily unavailable.');
-    const { data, error } = await db.from('writeups').select('id,title,summary,created_at').order('created_at', { ascending: false });
+    const { data, error } = await db.from('writeups').select('id,title,summary,tags,created_at').order('created_at', { ascending: false });
     if (error) return siteError(grid, 'Write-ups could not be loaded. Please try again later.');
     if (!data?.length) return siteError(grid, 'No write-ups have been published yet.');
     grid.replaceChildren(...data.map(item => {
@@ -57,6 +57,12 @@
       const date = item.created_at ? new Date(item.created_at) : null;
       card.append(el('time', 'writeup-date', date && !Number.isNaN(date.valueOf()) ? date.toLocaleDateString('en', { year: 'numeric', month: 'long', day: 'numeric' }) : 'Research note'));
       card.append(el('h2', '', item.title), el('p', '', item.summary || 'Read the full research note.'));
+      const tags = Array.isArray(item.tags) ? item.tags : [];
+      if (tags.length) {
+        const tagRow = el('div', 'tag-row');
+        tags.forEach(tag => tagRow.append(el('span', 'tag', `#${String(tag).replace(/^#/, '')}`)));
+        card.append(tagRow);
+      }
       const link = el('a', 'read-link', 'Read write-up →');
       link.href = `article.html?id=${encodeURIComponent(String(item.id))}`;
       card.append(link);
@@ -69,22 +75,69 @@
     const id = new URLSearchParams(location.search).get('id');
     if (!id || id.length > 128) return siteError(target, 'This article link is invalid.');
     if (!db) return siteError(target, window.portfolioDbError || 'This article is temporarily unavailable.');
-    const { data, error } = await db.from('writeups').select('title,summary,content,created_at').eq('id', id).maybeSingle();
+    const { data, error } = await db.from('writeups').select('title,summary,tags,content,created_at').eq('id', id).maybeSingle();
     if (error || !data) return siteError(target, 'This article could not be found.');
     document.title = `${data.title} — Pemos`;
+    if (!window.marked?.parse || !window.DOMPurify?.sanitize) return siteError(target, 'The article reader could not be loaded. Refresh and try again.');
+    const articleTitle = el('h1', '', data.title);
+    const date = data.created_at ? new Date(data.created_at) : null;
+    const meta = el('p', 'writeup-date', date && !Number.isNaN(date.valueOf()) ? date.toLocaleDateString('en', { year: 'numeric', month: 'long', day: 'numeric' }) : 'Research note');
+    const body = el('div', 'article-markdown');
     const parsed = window.marked.parse(typeof data.content === 'string' ? data.content : '', { gfm: true, breaks: false });
-    const safeHtml = window.DOMPurify.sanitize(parsed, {
+    const parsedDocument = document.createElement('template');
+    parsedDocument.innerHTML = parsed;
+    const calloutTypes = {
+      note: ['note', 'Note'], info: ['info', 'Info'],
+      abstract: ['summary', 'Abstract'], summary: ['summary', 'Summary'], tldr: ['summary', 'TL;DR'],
+      todo: ['todo', 'To-do'], success: ['success', 'Success'], check: ['success', 'Check'], done: ['success', 'Done'],
+      caution: ['caution', 'Caution'], attention: ['caution', 'Attention'],
+      failure: ['failure', 'Failure'], fail: ['failure', 'Fail'], missing: ['failure', 'Missing'],
+      danger: ['danger', 'Danger'], error: ['danger', 'Error'], bug: ['bug', 'Bug'],
+      quote: ['quote', 'Quote'], cite: ['quote', 'Cite']
+    };
+    parsedDocument.content.querySelectorAll('blockquote').forEach(quote => {
+      const firstParagraph = quote.querySelector(':scope > p');
+      if (!firstParagraph) return;
+      const paragraphText = firstParagraph.textContent;
+      const markerPattern = /\[!([a-z][\w-]*)\]([+-])?/i;
+      const marker = markerPattern.exec(paragraphText);
+      const type = marker && calloutTypes[marker[1].toLowerCase()];
+      if (!type) return;
+      const precedingText = paragraphText.slice(0, marker.index).trim();
+      const afterMarker = paragraphText.slice(marker.index + marker[0].length);
+      const titleMatch = /^[ \t]+([^\r\n]+)(?:\r?\n|$)/.exec(afterMarker);
+      const bodyAfterMarker = (titleMatch ? afterMarker.slice(titleMatch[0].length) : afterMarker).trim();
+      const callout = document.createElement('aside');
+      callout.className = `callout-note callout-${type[0]}`;
+      callout.setAttribute('role', 'note');
+      const label = document.createElement('strong');
+      label.className = 'callout-title';
+      label.textContent = titleMatch?.[1].trim() || type[1];
+      firstParagraph.remove();
+      [precedingText, bodyAfterMarker].filter(Boolean).reverse().forEach(text => {
+        const bodyParagraph = document.createElement('p');
+        bodyParagraph.textContent = text;
+        quote.insertBefore(bodyParagraph, quote.firstChild);
+      });
+      callout.append(label, ...Array.from(quote.childNodes));
+      quote.replaceWith(callout);
+    });
+    const safeHtml = window.DOMPurify.sanitize(parsedDocument.innerHTML, {
       USE_PROFILES: { html: true },
       FORBID_TAGS: ['style', 'iframe', 'form', 'input', 'button', 'object', 'embed', 'svg', 'math'],
       FORBID_ATTR: ['style']
     });
-    target.innerHTML = safeHtml;
-    target.querySelectorAll('a[href]').forEach(anchor => {
+    body.innerHTML = safeHtml;
+    body.querySelectorAll('a[href]').forEach(anchor => {
       const url = safeHttpUrl(anchor.getAttribute('href'));
       if (url) { anchor.href = url; anchor.rel = 'noopener noreferrer'; }
       else if (!anchor.getAttribute('href').startsWith('#')) anchor.removeAttribute('href');
     });
-    target.querySelectorAll('pre code').forEach(block => window.hljs?.highlightElement(block));
+    body.querySelectorAll('pre code').forEach(block => window.hljs?.highlightElement(block));
+    const tags = Array.isArray(data.tags) ? data.tags : [];
+    const tagRow = el('div', 'tag-row');
+    tags.forEach(tag => tagRow.append(el('span', 'tag', `#${String(tag).replace(/^#/, '')}`)));
+    target.replaceChildren(articleTitle, meta, ...(tags.length ? [tagRow] : []), body);
   }
 
   function inputField(form, label, name, type = 'text', required = true) {
@@ -125,9 +178,10 @@
       submit.disabled = true; statusNode(panel, 'Signing in…');
       const { error } = await db.auth.signInWithPassword({ email: login.elements.email.value.trim(), password: login.elements.password.value });
       submit.disabled = false;
-      if (error) return statusNode(panel, 'Sign-in failed. Check your credentials and try again.', true);
+      if (error) return statusNode(panel, `Sign-in failed: ${error.message || 'Check your email and password, then try again.'}`, true);
       renderDashboard(panel);
     });
+    overlay.append(panel);
     document.body.append(overlay); login.elements.email.focus();
   }
   async function renderDashboard(panel) {
@@ -138,10 +192,10 @@
     panel.append(el('p', 'admin-hint', 'Writes are checked by Supabase row-level security. Configure the policies in README.md before publishing.'));
     const writeupForm = document.createElement('form'); writeupForm.className = 'admin-form';
     writeupForm.append(el('h3', '', 'Publish a write-up'));
-    inputField(writeupForm, 'Title', 'title'); inputField(writeupForm, 'Short summary', 'summary', 'textarea');
+    inputField(writeupForm, 'Title', 'title'); inputField(writeupForm, 'Tags (comma-separated)', 'tags'); inputField(writeupForm, 'Short summary', 'summary', 'textarea');
     const content = inputField(writeupForm, 'Markdown content', 'content', 'textarea'); content.required = false; content.placeholder = 'Write Markdown or select a .md file below.';
     const fileWrap = el('label', 'file-label', 'Upload Markdown (.md)');
-    const fileInput = document.createElement('input'); fileInput.type = 'file'; fileInput.accept = '.md,text/markdown,text/plain'; fileInput.addEventListener('change', async () => {
+    const fileInput = document.createElement('input'); fileInput.type = 'file'; fileInput.accept = '.md'; fileInput.addEventListener('change', async () => {
       const file = fileInput.files?.[0]; if (!file) return;
       if (file.size > 1024 * 1024) { statusNode(panel, 'Markdown files must be under 1 MB.', true); fileInput.value = ''; return; }
       content.value = await file.text();
@@ -154,7 +208,11 @@
     writeupForm.addEventListener('submit', async event => {
       event.preventDefault(); publishButton.disabled = true;
       const values = new FormData(writeupForm);
-      const { error: insertError } = await db.from('writeups').insert({ title: String(values.get('title')).trim(), summary: String(values.get('summary')).trim(), content: String(values.get('content')) });
+      const tags = String(values.get('tags') || '').split(',').map(tag => tag.trim().replace(/^#/, '').toLowerCase()).filter(Boolean).slice(0, 12);
+      if (!tags.length) { publishButton.disabled = false; return statusNode(panel, 'Add at least one tag.', true); }
+      const contentText = String(values.get('content') || '');
+      if (!contentText.trim()) { publishButton.disabled = false; return statusNode(panel, 'Add Markdown content or upload a .md file.', true); }
+      const { error: insertError } = await db.from('writeups').insert({ title: String(values.get('title')).trim(), tags, summary: String(values.get('summary')).trim(), content: contentText });
       publishButton.disabled = false;
       if (insertError) return statusNode(panel, 'Could not publish. Check the writeups table and owner INSERT policy.', true);
       writeupForm.reset(); statusNode(panel, 'Write-up published.');
@@ -178,6 +236,9 @@
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === 'a') { event.preventDefault(); openAdmin(); }
     };
     document.addEventListener('keydown', keyHandler);
+    window.addEventListener('hashchange', () => {
+      if (location.hash === '#pemos_admin') openAdmin();
+    });
     if (location.hash === '#pemos_admin') openAdmin();
   }
   loadProjects(); loadWriteups(); loadArticle(); initAdmin();
