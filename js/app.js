@@ -169,7 +169,7 @@
     const title = el('h2', '', 'Owner portal'); title.id = 'admin-title'; panel.append(title);
     panel.append(el('p', '', 'Sign in with the owner account to publish research and projects. Publishing access is enforced by Supabase policies.'));
     const login = document.createElement('form'); login.className = 'admin-form';
-    inputField(login, 'Owner email', 'email', 'email'); inputField(login, 'Password', 'password', 'password');
+    inputField(login, 'User', 'email', 'email'); inputField(login, 'Password', 'password', 'password');
     const actions = el('div', 'admin-actions'); const submit = el('button', '', 'Sign in'); submit.type = 'submit';
     const cancel = el('button', '', 'Cancel'); cancel.type = 'button'; cancel.addEventListener('click', () => close.click());
     actions.append(submit, cancel); login.append(actions); panel.append(login);
