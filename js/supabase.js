@@ -1,6 +1,6 @@
 /* The publishable/anon key is intended for browser use. Protect data with Supabase RLS. */
 (() => {
-  const SUPABASE_URL = 'sb_publishable_W6EUTfPqdpO96mGEAv0uDQ_4jMzNlaV';
+  const SUPABASE_URL = 'https://tuavqypvnxzajbtgldaz.supabase.co/rest/v1/';
   const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_W6EUTfPqdpO96mGEAv0uDQ_4jMzNlaV';
   if (!window.supabase?.createClient) {
     window.portfolioDbError = 'The database client could not be loaded. Check your connection and refresh.';
